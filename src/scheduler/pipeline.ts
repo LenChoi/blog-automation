@@ -4,14 +4,12 @@ import { generateDraft } from "../engine/content-generator.js";
 import { retouchContent } from "../engine/retoucher.js";
 import { validateContent } from "../engine/validator.js";
 import { toEditorScript, toHtml } from "../engine/formatter.js";
-import { getImagesForArticle } from "../engine/image-matcher.js";
+import { generateImagesForArticle } from "../engine/image-generator.js";
 import { shouldIncludeLink } from "../engine/link-decider.js";
 import { publishToNaver, confirmPublishNaver } from "../publisher/naver.js";
 import { publishToTistory, confirmPublishTistory } from "../publisher/tistory.js";
 import { reviewScreenshot } from "../publisher/reviewer.js";
-import path from "path";
 
-const IMAGE_BASE_DIR = path.resolve("data/images");
 const MAX_RETOUCH_RETRIES = 2;
 const MAX_REVIEW_RETRIES = 2;
 
@@ -94,22 +92,8 @@ export async function runPipelineForBlog(blogId: number): Promise<{
 
   if (!validationResult) return { success: false, error: "Validation not completed" };
 
-  // 7. Get images
-  const recentImages = await prisma.article.findMany({
-    where: { blogId },
-    orderBy: { createdAt: "desc" },
-    take: 5,
-    select: { editorScript: true, htmlContent: true },
-  });
-  // Extract recently used image paths (simplified)
-  const recentlyUsed: string[] = [];
-
-  const images = getImagesForArticle(
-    IMAGE_BASE_DIR,
-    selectedKeyword.category,
-    selectedKeyword.keyword,
-    recentlyUsed
-  );
+  // 7. Generate images via Gemini (context-aware, SEO-friendly filenames)
+  const images = await generateImagesForArticle(retouched, selectedKeyword.keyword);
 
   // 8. Generate hashtags
   const hashtags = generateHashtags(selectedKeyword.keyword, selectedKeyword.category);
