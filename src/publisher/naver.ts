@@ -115,11 +115,32 @@ export async function publishToNaver(input: NaverPublishInput): Promise<PublishR
     isFirstBlock = false;
 
     switch (block.type) {
-      case "text":
-        await step(`본문 텍스트 (${i + 1}/${blocks.length})`,
-          `${clickAction} 아래 텍스트를 입력해줘. **볼드**로 표시된 부분은 입력 후 해당 텍스트를 선택해서 볼드+초록색(#2DB400)으로 서식을 적용해줘:\n\n${block.content}`
-        );
+      case "text": {
+        // 500자 단위로 나눠서 입력
+        const text = block.content;
+        const chunkSize = 500;
+        const chunks: string[] = [];
+        let remaining = text;
+        while (remaining.length > 0) {
+          if (remaining.length <= chunkSize) {
+            chunks.push(remaining);
+            break;
+          }
+          let splitAt = remaining.lastIndexOf("\n", chunkSize);
+          if (splitAt === -1 || splitAt < 200) splitAt = remaining.lastIndexOf(" ", chunkSize);
+          if (splitAt === -1 || splitAt < 200) splitAt = chunkSize;
+          chunks.push(remaining.slice(0, splitAt));
+          remaining = remaining.slice(splitAt).trimStart();
+        }
+
+        for (let c = 0; c < chunks.length; c++) {
+          const action = (isFirstBlock && c === 0) ? "본문 영역을 클릭하고" : "현재 커서 위치에서 이어서";
+          await step(`본문 텍스트 (블록${i + 1}, ${c + 1}/${chunks.length})`,
+            `${action} 아래 텍스트를 입력해줘. **볼드**로 표시된 부분은 입력 후 해당 텍스트를 선택해서 볼드+초록색(#2DB400)으로 서식을 적용해줘:\n\n${chunks[c]}`
+          );
+        }
         break;
+      }
 
       case "heading":
         await step(`소제목 입력 (${i + 1}/${blocks.length})`,
