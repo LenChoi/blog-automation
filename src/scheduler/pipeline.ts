@@ -205,18 +205,22 @@ export async function publishArticle(articleId: number): Promise<{
     data: { status: "writing" },
   });
 
-  // Publish (temp save + screenshot)
+  // Publish via OpenClaw
   let publishResult;
+  const hashtags = JSON.parse(article.hashtags);
   if (article.blog.platform === "naver") {
     publishResult = await publishToNaver({
       commands: article.editorScript as any[],
       title: article.title,
+      blogCategory: article.blogCategory,
+      hashtags,
     });
   } else {
     publishResult = await publishToTistory({
       htmlContent: article.htmlContent || "",
       title: article.title,
-      hashtags: JSON.parse(article.hashtags),
+      hashtags,
+      blogCategory: article.blogCategory,
     });
   }
 
