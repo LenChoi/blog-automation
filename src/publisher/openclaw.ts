@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 
 const OPENCLAW_URL = "http://127.0.0.1:18789";
+const SESSION_KEY = "blog-automation"; // 고정 세션 — 브라우저 상태 유지
 
 function getToken(): string {
   const configPath = path.join(process.env.HOME || "", ".openclaw", "openclaw.json");
@@ -9,7 +10,7 @@ function getToken(): string {
   return config.gateway?.auth?.token || "";
 }
 
-export async function openclawChat(prompt: string, timeoutMs = 180000): Promise<string> {
+export async function openclawChat(prompt: string, timeoutMs = 3600000): Promise<string> { // 1시간 기본 타임아웃
   const token = getToken();
 
   const controller = new AbortController();
@@ -21,10 +22,12 @@ export async function openclawChat(prompt: string, timeoutMs = 180000): Promise<
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${token}`,
+        "x-openclaw-session-key": SESSION_KEY,
       },
       body: JSON.stringify({
         model: "openclaw/default",
         stream: false,
+        user: SESSION_KEY,
         messages: [{ role: "user", content: prompt }],
       }),
       signal: controller.signal,

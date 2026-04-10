@@ -17,87 +17,153 @@ export interface PublishResult {
   error?: string;
 }
 
-function commandsToMarkdown(commands: EditorCommand[]): string {
-  const parts: string[] = [];
+function extractContent(commands: EditorCommand[]): {
+  paragraphs: string[];
+  headings: { text: string; afterParagraph: number }[];
+  images: { url: string; afterParagraph: number }[];
+  hashtags: string[];
+} {
+  const paragraphs: string[] = [];
+  const headings: { text: string; afterParagraph: number }[] = [];
+  const images: { url: string; afterParagraph: number }[] = [];
+  const hashtags: string[] = [];
+  let currentParagraph = "";
+
   for (const cmd of commands) {
     switch (cmd.type) {
       case "heading":
-        parts.push(`\n## ${cmd.text}\n`);
+        if (currentParagraph.trim()) {
+          paragraphs.push(currentParagraph.trim());
+          currentParagraph = "";
+        }
+        headings.push({ text: cmd.text || "", afterParagraph: paragraphs.length });
         break;
       case "text":
-        parts.push(cmd.content || "");
+        currentParagraph += cmd.content || "";
         break;
       case "highlight":
-        parts.push(`**${cmd.text}**`);
+        currentParagraph += cmd.text || "";
         break;
       case "newline":
-        parts.push("\n");
+        if (currentParagraph.trim()) {
+          paragraphs.push(currentParagraph.trim());
+          currentParagraph = "";
+        }
         break;
       case "image":
-        parts.push(`\n![이미지](${cmd.path})\n`);
+        if (currentParagraph.trim()) {
+          paragraphs.push(currentParagraph.trim());
+          currentParagraph = "";
+        }
+        if (cmd.path) images.push({ url: cmd.path, afterParagraph: paragraphs.length });
         break;
       case "quote":
-        parts.push(`\n> ${cmd.text}\n`);
-        break;
-      case "separator":
-        parts.push("\n---\n");
+        if (currentParagraph.trim()) {
+          paragraphs.push(currentParagraph.trim());
+          currentParagraph = "";
+        }
+        paragraphs.push(`[인용] ${cmd.text}`);
         break;
       case "hashtags":
-        if (cmd.tags) parts.push(`\n${cmd.tags.map(t => "#" + t).join(" ")}`);
+        if (cmd.tags) hashtags.push(...cmd.tags);
         break;
     }
   }
-  return parts.join("");
+  if (currentParagraph.trim()) paragraphs.push(currentParagraph.trim());
+
+  return { paragraphs, headings, images, hashtags };
 }
 
-export async function publishToNaver(input: NaverPublishInput): Promise<PublishResult> {
-  const content = commandsToMarkdown(input.commands);
-  const hashtagStr = input.hashtags?.map(t => "#" + t).join(" ") || "";
-  const categoryStr = input.blogCategory ? `카테고리 "${input.blogCategory}"를 선택해줘.` : "";
-
-  const prompt = `네이버 블로그에 글을 작성해줘. 아래 지시사항을 정확히 따라줘.
-
-1. 브라우저에서 https://blog.naver.com/${BLOG_ID} 에 접속해줘
-2. "글쓰기" 버튼을 클릭해줘
-3. 스마트에디터가 로드되면:
-   - 제목 입력란에: ${input.title}
-   ${categoryStr}
-   - 본문에 아래 내용을 입력해줘 (마크다운 형식을 네이버 에디터에 맞게 변환해서)
-   - 이미지 URL은 에디터에 직접 이미지로 삽입해줘
-   - 소제목(##)은 크기를 크게, 색상을 초록색(#2DB400)으로 해줘
-   - **볼드** 텍스트는 형광펜(연두색 배경)으로 강조해줘
-   - 인용구(>)는 인용구 컴포넌트를 사용해줘
-4. 해시태그 영역에: ${hashtagStr}
-5. "발행" 버튼을 클릭해서 발행해줘 (임시저장이 아닌 발행)
-6. 발행이 완료되면 발행된 글의 URL을 알려줘
-
-[본문 내용]
-${content}`;
-
+async function step(description: string, prompt: string): Promise<boolean> {
+  console.log(`[Naver] ${description}...`);
   try {
-    console.log(`[Naver] Publishing: "${input.title}" via OpenClaw...`);
-    const result = await openclawChat(prompt, 300000); // 5분 타임아웃
-    console.log(`[Naver] OpenClaw response: ${result.slice(0, 300)}`);
-
-    // URL 추출 시도
-    const urlMatch = result.match(/https?:\/\/blog\.naver\.com\/[^\s)]+/);
-    const publishedUrl = urlMatch ? urlMatch[0] : undefined;
-
-    const isSuccess = result.includes("발행") || result.includes("완료") || !!publishedUrl;
-
-    return {
-      success: isSuccess,
-      publishedUrl,
-      error: isSuccess ? undefined : result.slice(0, 200),
-    };
+    const result = await openclawChat(prompt, 300000); // 5분 타임아웃 per step
+    console.log(`[Naver] ${description} → ${result.slice(0, 100)}`);
+    return true;
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    console.error(`[Naver] Publish failed:`, msg);
-    return { success: false, error: msg };
+    console.error(`[Naver] ${description} 실패:`, error);
+    return false;
   }
 }
 
+export async function publishToNaver(input: NaverPublishInput): Promise<PublishResult> {
+  const content = extractContent(input.commands);
+  const allHashtags = input.hashtags || content.hashtags;
+
+  console.log(`[Naver] 발행 시작: "${input.title}" (${content.paragraphs.length}개 문단, ${content.images.length}개 이미지)`);
+
+  // 1단계: 글쓰기 페이지 열기
+  if (!await step("글쓰기 페이지 열기",
+    `네이버 블로그 글쓰기 페이지를 열어줘. 주소는 https://blog.naver.com/${BLOG_ID}/postwrite 야.`
+  )) return { success: false, error: "글쓰기 페이지 열기 실패" };
+
+  // 2단계: 제목 입력
+  if (!await step("제목 입력",
+    `제목 입력란에 "${input.title}"를 입력해줘.`
+  )) return { success: false, error: "제목 입력 실패" };
+
+  // 3단계: 카테고리 선택
+  if (input.blogCategory) {
+    await step("카테고리 선택",
+      `카테고리를 "${input.blogCategory}"로 선택해줘.`
+    );
+  }
+
+  // 4단계: 본문 입력 (문단별로)
+  const fullText = content.paragraphs.join("\n\n");
+  // 텍스트를 2000자 단위로 나눠서 입력
+  const chunks: string[] = [];
+  let remaining = fullText;
+  while (remaining.length > 0) {
+    if (remaining.length <= 2000) {
+      chunks.push(remaining);
+      break;
+    }
+    // 2000자 근처에서 줄바꿈 위치 찾기
+    let splitAt = remaining.lastIndexOf("\n\n", 2000);
+    if (splitAt === -1 || splitAt < 500) splitAt = 2000;
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt);
+  }
+
+  for (let i = 0; i < chunks.length; i++) {
+    const action = i === 0 ? "본문 영역을 클릭하고, 아래 텍스트를 입력해줘" : "이어서 아래 텍스트를 추가로 입력해줘";
+    if (!await step(`본문 입력 (${i + 1}/${chunks.length})`,
+      `${action}:\n\n${chunks[i]}`
+    )) return { success: false, error: `본문 입력 실패 (${i + 1}/${chunks.length})` };
+  }
+
+  // 5단계: 이미지 삽입
+  for (let i = 0; i < content.images.length; i++) {
+    await step(`이미지 삽입 (${i + 1}/${content.images.length})`,
+      `본문에 이미지를 삽입해줘. 이미지 URL: ${content.images[i].url}`
+    );
+  }
+
+  // 6단계: 소제목 서식 적용
+  for (let i = 0; i < content.headings.length; i++) {
+    await step(`소제목 서식 (${i + 1}/${content.headings.length})`,
+      `본문에서 "ㅣ${content.headings[i].text}" 텍스트를 찾아서 드래그 선택한 후, 글자 크기를 크게(24px), 글자 색상을 초록색(#2DB400), 볼드로 변경해줘.`
+    );
+  }
+
+  // 7단계: 해시태그 입력
+  if (allHashtags.length > 0) {
+    await step("해시태그 입력",
+      `태그 영역에 다음 해시태그를 입력해줘: ${allHashtags.map(t => "#" + t).join(" ")}`
+    );
+  }
+
+  // 8단계: 발행
+  const publishResult = await step("발행",
+    `"발행" 버튼을 클릭해서 공개 발행해줘. 발행 완료 후 글의 URL을 알려줘.`
+  );
+
+  if (!publishResult) return { success: false, error: "발행 버튼 클릭 실패" };
+
+  return { success: true };
+}
+
 export async function confirmPublishNaver(): Promise<PublishResult> {
-  // 이미 publishToNaver에서 바로 발행하므로 별도 확인 불필요
   return { success: true };
 }
