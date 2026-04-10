@@ -69,10 +69,12 @@ function commandsToBlocks(commands: EditorCommand[]): ContentBlock[] {
   return blocks;
 }
 
+const TIMEOUT_INSTRUCTION = "중요: 모든 브라우저 액션(click, type, navigate, wait 등)에 timeoutMs: 30000을 설정해줘. 임시저장 복원 팝업이 뜨면 '아니오'를 클릭해줘.";
+
 async function step(description: string, prompt: string): Promise<string> {
   console.log(`[Naver] ${description}...`);
   try {
-    const result = await openclawChat(prompt, 300000);
+    const result = await openclawChat(`${TIMEOUT_INSTRUCTION}\n\n${prompt}`, 300000);
     console.log(`[Naver] ${description} → ${result.slice(0, 100)}`);
     return result;
   } catch (error) {
