@@ -3,7 +3,7 @@ import path from "path";
 
 const OPENCLAW_URL = "http://127.0.0.1:18789";
 const SESSION_KEY = "blog-automation";
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 10;
 
 function getToken(): string {
   const configPath = path.join(process.env.HOME || "", ".openclaw", "openclaw.json");

@@ -173,26 +173,9 @@ export async function publishToNaver(input: NaverPublishInput): Promise<PublishR
     );
   }
 
-  // 6단계: 임시저장 + 미리보기 확인
-  const previewResult = await step("미리보기 확인",
-    `"임시저장" 버튼을 클릭해줘. 저장이 되면 미리보기를 열어서 글이 어떻게 보이는지 확인해줘. 다음 항목을 체크하고 결과를 알려줘:
-1. 제목이 정상적으로 표시되는지
-2. 소제목이 초록색 큰 글씨로 표시되는지
-3. 이미지가 본문 중간에 올바른 위치에 표시되는지 (상단에 몰려있으면 안됨)
-4. 텍스트가 잘리지 않고 전체가 표시되는지
-5. 해시태그가 하단에 표시되는지
-문제가 있으면 "문제있음: [문제내용]"으로, 정상이면 "정상"으로 답해줘.`
-  );
-
-  // 7단계: 확인 결과에 따라 발행
-  if (previewResult.includes("문제있음")) {
-    console.log(`[Naver] 미리보기 문제 발견: ${previewResult}`);
-    return { success: false, error: `미리보기 문제: ${previewResult.slice(0, 200)}` };
-  }
-
-  // 8단계: 발행
+  // 6단계: 발행
   const publishResult = await step("발행",
-    `미리보기를 닫고 "발행" 버튼을 클릭해서 공개 발행해줘. 발행 완료 후 글의 URL을 알려줘.`
+    `"발행" 버튼을 클릭해서 공개 발행해줘. 발행 완료 후 글의 URL을 알려줘.`
   );
 
   const urlMatch = publishResult.match(/https?:\/\/blog\.naver\.com\/[^\s)]+/);
