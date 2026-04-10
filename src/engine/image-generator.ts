@@ -1,7 +1,7 @@
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
-const IMAGE_MODEL = "gemini-2.0-flash-exp";
+const IMAGE_MODEL = "gemini-3.1-flash-image-preview";
 
 // R2 config (same as the-wreath)
 const R2_ACCOUNT_ID = "7e886f461b54b421dfc5d9174a83c206";
@@ -20,17 +20,41 @@ const s3Client = new S3Client({
   forcePathStyle: true,
 });
 
-function extractContextAroundMarker(content: string, marker: string): string {
-  const lines = content.split("\n");
+function extractContextAroundMarker(content: string, marker: string, position: "top" | "mid" | "bottom"): string {
+  const lines = content.split("\n").filter((l) => l.trim().length > 0);
   const markerIndex = lines.findIndex((l) => l.trim() === marker);
-  if (markerIndex === -1) return "";
 
-  // Grab 3 lines before and after the marker
-  const start = Math.max(0, markerIndex - 3);
-  const end = Math.min(lines.length, markerIndex + 4);
-  return lines
+  if (markerIndex !== -1) {
+    // Marker found — grab surrounding lines
+    const start = Math.max(0, markerIndex - 3);
+    const end = Math.min(lines.length, markerIndex + 4);
+    return lines
+      .slice(start, end)
+      .filter((l) => !l.includes("[IMAGE_"))
+      .join(" ")
+      .replace(/[#*>\[\]]/g, "")
+      .trim();
+  }
+
+  // Marker not found — fallback: extract from position in text
+  const textLines = lines.filter((l) => !l.startsWith("#") && !l.includes("[IMAGE_"));
+  const total = textLines.length;
+  if (total === 0) return "";
+
+  let start: number, end: number;
+  if (position === "top") {
+    start = 0;
+    end = Math.min(5, total);
+  } else if (position === "mid") {
+    start = Math.floor(total * 0.4);
+    end = Math.min(start + 5, total);
+  } else {
+    start = Math.max(0, total - 5);
+    end = total;
+  }
+
+  return textLines
     .slice(start, end)
-    .filter((l) => !l.includes("[IMAGE_"))
     .join(" ")
     .replace(/[#*>\[\]]/g, "")
     .trim();
@@ -136,7 +160,7 @@ export async function generateImagesForArticle(content: string, keyword: string 
   const imageUrls: string[] = [];
 
   for (let i = 0; i < markers.length; i++) {
-    const context = extractContextAroundMarker(content, markers[i]);
+    const context = extractContextAroundMarker(content, markers[i], positions[i]);
     if (!context) {
       console.warn(`[ImageGen] No context found for ${markers[i]}`);
       imageUrls.push("");

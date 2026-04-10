@@ -70,6 +70,7 @@ export async function runPipelineForBlog(blogId: number): Promise<{
   });
 
   // 5. Retouch (2nd pass) with retry
+  console.log(`[Pipeline] Draft generated: ${draft.title} (${draft.content.length} chars)`);
   let retouched = "";
   let validationResult;
 
@@ -80,13 +81,15 @@ export async function runPipelineForBlog(blogId: number): Promise<{
       persona: blog.persona,
       keyword: selectedKeyword.keyword,
     });
+    console.log(`[Pipeline] Retouch #${attempt}: ${retouched.length} chars, first 200: ${retouched.slice(0, 200)}`);
 
     // 6. Validate (3rd pass)
     validationResult = await validateContent(retouched, selectedKeyword.keyword);
+    console.log(`[Pipeline] Validation #${attempt}:`, JSON.stringify(validationResult));
     if (validationResult.pass) break;
 
     if (attempt === MAX_RETOUCH_RETRIES) {
-      return { success: false, error: `Validation failed after ${MAX_RETOUCH_RETRIES + 1} attempts. aiScore: ${validationResult.aiScore}` };
+      return { success: false, error: `Validation failed after ${MAX_RETOUCH_RETRIES + 1} attempts. aiScore: ${validationResult.aiScore}, lengthOk: ${validationResult.lengthOk}, densityOk: ${validationResult.densityOk}, density: ${validationResult.density.toFixed(2)}%, bannedPhrases: [${validationResult.bannedPhrases.join(", ")}]` };
     }
   }
 

@@ -32,7 +32,7 @@ describe("checkLength", () => {
   });
 
   it("returns false for too long", () => {
-    const text = "가".repeat(3000);
+    const text = "가".repeat(5000);
     expect(checkLength(text)).toBe(false);
   });
 });

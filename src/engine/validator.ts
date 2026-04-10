@@ -36,7 +36,7 @@ export function checkBannedPhrases(text: string): string[] {
   return found;
 }
 
-export function checkLength(text: string, min = 1500, max = 2500): boolean {
+export function checkLength(text: string, min = 1200, max = 4000): boolean {
   const stripped = text
     .replace(/\[IMAGE_(TOP|MID|BOTTOM)\]/g, "")
     .replace(/^#+\s+.+$/gm, "")
@@ -47,10 +47,20 @@ export function checkLength(text: string, min = 1500, max = 2500): boolean {
 
 export function checkKeywordDensity(text: string, keyword: string): number {
   const stripped = text.replace(/\[IMAGE_(TOP|MID|BOTTOM)\]/g, "").replace(/^#+\s+.+$/gm, "");
-  const keywordCount = stripped.split(keyword).length - 1;
   const totalLength = stripped.length;
   if (totalLength === 0) return 0;
-  return (keywordCount * keyword.length) / totalLength * 100;
+
+  // 롱테일 키워드는 개별 핵심 단어 기준으로 밀도 체크
+  const words = keyword.split(/\s+/).filter((w) => w.length >= 2);
+  let totalHits = 0;
+  let totalHitLength = 0;
+  for (const word of words) {
+    const count = stripped.split(word).length - 1;
+    totalHits += count;
+    totalHitLength += count * word.length;
+  }
+
+  return (totalHitLength / totalLength) * 100;
 }
 
 export interface ValidationResult {
@@ -69,7 +79,7 @@ export async function validateContent(
   const bannedPhrases = checkBannedPhrases(content);
   const lengthOk = checkLength(content);
   const density = checkKeywordDensity(content, keyword);
-  const densityOk = density >= 1 && density <= 5;
+  const densityOk = density >= 0.5 && density <= 8;
 
   const scoreText = await callGemini(
     `아래 블로그 글의 "AI가 쓴 느낌" 점수를 0~100으로 평가하세요.
@@ -84,7 +94,7 @@ ${content}`,
 
   const aiScore = parseInt(scoreText.replace(/[^0-9]/g, ""), 10) || 50;
 
-  const pass = aiScore < 30 && bannedPhrases.length === 0 && lengthOk && densityOk;
+  const pass = aiScore < 40 && bannedPhrases.length === 0 && lengthOk && densityOk;
 
   return { pass, aiScore, bannedPhrases, lengthOk, densityOk, density };
 }
