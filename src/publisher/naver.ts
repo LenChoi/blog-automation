@@ -117,13 +117,17 @@ export async function publishToNaver(input: NaverPublishInput): Promise<PublishR
     switch (block.type) {
       case "text":
         await step(`본문 텍스트 (${i + 1}/${blocks.length})`,
-          `${clickAction} 아래 텍스트를 입력해줘:\n\n${block.content}`
+          `${clickAction} 아래 텍스트를 입력해줘. **볼드**로 표시된 부분은 입력 후 해당 텍스트를 선택해서 볼드+초록색(#2DB400)으로 서식을 적용해줘:\n\n${block.content}`
         );
         break;
 
       case "heading":
         await step(`소제목 입력 (${i + 1}/${blocks.length})`,
-          `${clickAction} 엔터를 한번 치고, "ㅣ${block.content}" 를 입력해줘. 그리고 입력한 "ㅣ${block.content}" 텍스트를 드래그로 전체 선택한 후, 글자 크기를 24px(또는 "크게")로, 글자 색상을 초록색(#2DB400)으로, 볼드(굵게)를 적용해줘. 서식 적용 후 엔터를 쳐서 다음 줄로 이동해줘.`
+          `${clickAction} 엔터를 두번 치고, "${block.content}" 를 입력해줘. 그리고 방금 입력한 "${block.content}" 텍스트 전체를 드래그로 선택한 후, 다음 서식을 적용해줘:
+1. 글자 크기를 24px 또는 "크게"로 변경
+2. 글자 색상을 초록색(#2DB400)으로 변경
+3. 볼드(굵게) 적용
+서식 적용 후 텍스트 끝에 커서를 놓고 엔터를 쳐서 다음 줄로 이동해줘.`
         );
         break;
 
