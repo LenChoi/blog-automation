@@ -1,5 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
 import fs from "fs";
+
+const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 export interface ReviewResult {
   pass: boolean;
@@ -26,32 +27,48 @@ JSON으로만 답하세요:
 }`;
 
 export async function reviewScreenshot(screenshotPath: string): Promise<ReviewResult> {
-  // Check if screenshot exists
   if (!fs.existsSync(screenshotPath)) {
     return { pass: false, score: 0, issues: ["Screenshot file not found"] };
   }
 
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return { pass: false, score: 0, issues: ["GEMINI_API_KEY is not set"] };
+  }
+
   const imageData = fs.readFileSync(screenshotPath);
   const base64 = imageData.toString("base64");
-  const mediaType = screenshotPath.endsWith(".png") ? "image/png" as const : "image/jpeg" as const;
+  const mimeType = screenshotPath.endsWith(".png") ? "image/png" : "image/jpeg";
 
-  const client = new Anthropic();
-  const message = await client.messages.create({
-    model: "claude-opus-4-20250514",
-    max_tokens: 500,
-    messages: [{
-      role: "user",
-      content: [
+  const requestBody = {
+    contents: [{
+      parts: [
         {
-          type: "image",
-          source: { type: "base64", media_type: mediaType, data: base64 },
+          inlineData: { mimeType, data: base64 },
         },
-        { type: "text", text: REVIEW_PROMPT },
+        { text: REVIEW_PROMPT },
       ],
     }],
-  });
+    generationConfig: {
+      maxOutputTokens: 500,
+    },
+  };
 
-  const responseText = message.content[0].type === "text" ? message.content[0].text : '{"score":0,"issues":["Failed to parse"]}';
+  const response = await fetch(
+    `${GEMINI_BASE_URL}/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+    }
+  );
+
+  if (!response.ok) {
+    return { pass: false, score: 0, issues: [`Gemini API error: ${response.status}`] };
+  }
+
+  const data = await response.json();
+  const responseText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '{"score":0,"issues":["Empty response"]}';
 
   try {
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);

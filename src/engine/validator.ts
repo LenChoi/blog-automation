@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { callGemini } from "./gemini.js";
 
 const BANNED_PHRASES = [
   "에 대해 알아보겠습니다",
@@ -71,23 +71,17 @@ export async function validateContent(
   const density = checkKeywordDensity(content, keyword);
   const densityOk = density >= 1 && density <= 5;
 
-  const client = new Anthropic();
-  const message = await client.messages.create({
-    model: "claude-opus-4-20250514",
-    max_tokens: 200,
-    messages: [{
-      role: "user",
-      content: `아래 블로그 글의 "AI가 쓴 느낌" 점수를 0~100으로 평가하세요.
+  const scoreText = await callGemini(
+    `아래 블로그 글의 "AI가 쓴 느낌" 점수를 0~100으로 평가하세요.
 0 = 완전히 사람이 쓴 글, 100 = 완전히 AI가 쓴 글.
 
 숫자만 답하세요. 예: 25
 
 ---
 ${content}`,
-    }],
-  });
+    200
+  );
 
-  const scoreText = message.content[0].type === "text" ? message.content[0].text : "50";
   const aiScore = parseInt(scoreText.replace(/[^0-9]/g, ""), 10) || 50;
 
   const pass = aiScore < 30 && bannedPhrases.length === 0 && lengthOk && densityOk;

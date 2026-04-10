@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { callGemini } from "./gemini.js";
 
 export interface DraftInput {
   keyword: string;
@@ -94,16 +94,8 @@ function extractTitle(content: string): string {
 }
 
 export async function generateDraft(input: DraftInput): Promise<DraftResult> {
-  const client = new Anthropic();
   const prompt = buildPrompt(input);
-
-  const message = await client.messages.create({
-    model: "claude-opus-4-20250514",
-    max_tokens: 4096,
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  const content = message.content[0].type === "text" ? message.content[0].text : "";
+  const content = await callGemini(prompt);
   const title = extractTitle(content);
 
   return { title, content };

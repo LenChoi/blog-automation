@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { callGemini } from "./gemini.js";
 import { prisma } from "../db.js";
 import { findDuplicates } from "./keyword-similarity.js";
 
@@ -54,18 +54,11 @@ export async function generateKeywords(blogId: number): Promise<GeneratedKeyword
 
   const priorityCategory = getPriorityCategory();
 
-  const client = new Anthropic();
   const prompt = GENERATE_PROMPT
     .replace("{used_keywords}", usedList.length > 0 ? usedList.join("\n") : "(없음)")
     .replace("{priority_category}", priorityCategory);
 
-  const message = await client.messages.create({
-    model: "claude-opus-4-20250514",
-    max_tokens: 4096,
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  const responseText = message.content[0].type === "text" ? message.content[0].text : "[]";
+  const responseText = await callGemini(prompt);
 
   // Extract JSON array from response
   const jsonMatch = responseText.match(/\[[\s\S]*\]/);

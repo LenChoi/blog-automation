@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { callGemini } from "./gemini.js";
 
 export interface RetouchInput {
   draft: string;
@@ -47,17 +47,10 @@ const RETOUCH_PROMPT = `당신은 {persona}입니다.
 {draft}`;
 
 export async function retouchContent(input: RetouchInput): Promise<string> {
-  const client = new Anthropic();
   const prompt = RETOUCH_PROMPT
     .replace("{persona}", input.persona)
     .replace("{keyword}", input.keyword)
     .replace("{draft}", input.draft);
 
-  const message = await client.messages.create({
-    model: "claude-opus-4-20250514",
-    max_tokens: 4096,
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  return message.content[0].type === "text" ? message.content[0].text : "";
+  return callGemini(prompt);
 }
