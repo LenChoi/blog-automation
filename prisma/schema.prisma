@@ -54,6 +54,8 @@ enum ReviewMode {
 model Blog {
   id          Int       @id @default(autoincrement())
   name        String
+  nickname    String    @default("")
+  description String    @default("") @db.VarChar(500)
   platform    Platform
   type        BlogType
   persona     String    @db.Text
@@ -88,6 +90,7 @@ model Article {
   blogId        Int
   keywordId     Int           @unique
   title         String
+  blogCategory  String        @default("")
   draft         String        @db.LongText
   retouched     String        @db.LongText
   editorScript  Json?

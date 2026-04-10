@@ -6,6 +6,7 @@ import { validateContent } from "../engine/validator.js";
 import { toEditorScript, toHtml } from "../engine/formatter.js";
 import { generateImagesForArticle } from "../engine/image-generator.js";
 import { shouldIncludeLink } from "../engine/link-decider.js";
+import { mapToCategory } from "../engine/category-mapper.js";
 import { publishToNaver, confirmPublishNaver } from "../publisher/naver.js";
 import { publishToTistory, confirmPublishTistory } from "../publisher/tistory.js";
 import { reviewScreenshot } from "../publisher/reviewer.js";
@@ -126,12 +127,21 @@ export async function runPipelineForBlog(blogId: number): Promise<{
   const titleMatch = retouched.match(/^#\s+(.+)$/m);
   const title = titleMatch ? titleMatch[1].trim().slice(0, 25) : draft.title.slice(0, 25);
 
-  // 10. Save article
+  // 10. Map to blog category
+  const blogCategory = mapToCategory(
+    blog.platform as "naver" | "tistory",
+    selectedKeyword.category,
+    selectedKeyword.keyword,
+  );
+  console.log(`[Pipeline] Category: ${blogCategory}`);
+
+  // 11. Save article
   const article = await prisma.article.create({
     data: {
       blogId,
       keywordId: selectedKeyword.id,
       title,
+      blogCategory,
       draft: draft.content,
       retouched,
       editorScript: editorScript ? JSON.parse(JSON.stringify(editorScript)) : undefined,
