@@ -1,0 +1,124 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Platform {
+  naver
+  tistory
+}
+
+enum BlogType {
+  seo
+  review
+}
+
+enum KeywordDifficulty {
+  low
+  mid
+  high
+}
+
+enum KeywordStatus {
+  pending
+  used
+  exhausted
+}
+
+enum ArticleStatus {
+  draft
+  ready
+  scheduled
+  published
+}
+
+enum ScheduleStatus {
+  pending
+  writing
+  reviewing
+  approved
+  published
+  failed
+}
+
+enum ReviewMode {
+  auto
+  semi
+  manual
+}
+
+model Blog {
+  id          Int       @id @default(autoincrement())
+  name        String
+  platform    Platform
+  type        BlogType
+  persona     String    @db.Text
+  postCount   Int       @default(0)
+  linkEnabled Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+
+  keywords  Keyword[]
+  articles  Article[]
+  schedules Schedule[]
+}
+
+model Keyword {
+  id           Int               @id @default(autoincrement())
+  blogId       Int
+  keyword      String
+  category     String
+  searchVolume Int               @default(500)
+  difficulty   KeywordDifficulty @default(low)
+  status       KeywordStatus     @default(pending)
+  usedAt       DateTime?
+  createdAt    DateTime          @default(now())
+
+  blog    Blog     @relation(fields: [blogId], references: [id])
+  article Article?
+
+  @@unique([keyword])
+}
+
+model Article {
+  id            Int           @id @default(autoincrement())
+  blogId        Int
+  keywordId     Int           @unique
+  title         String
+  draft         String        @db.LongText
+  retouched     String        @db.LongText
+  editorScript  Json?
+  htmlContent   String?       @db.LongText
+  hashtags      String        @db.Text
+  aiScore       Int           @default(100)
+  hasLink       Boolean       @default(false)
+  status        ArticleStatus @default(draft)
+  publishedAt   DateTime?
+  publishedUrl  String?
+  createdAt     DateTime      @default(now())
+
+  blog     Blog      @relation(fields: [blogId], references: [id])
+  keyword  Keyword   @relation(fields: [keywordId], references: [id])
+  schedule Schedule?
+}
+
+model Schedule {
+  id             Int            @id @default(autoincrement())
+  articleId      Int            @unique
+  blogId         Int
+  scheduledAt    DateTime
+  status         ScheduleStatus @default(pending)
+  reviewMode     ReviewMode     @default(semi)
+  screenshotPath String?
+  reviewResult   Json?
+  reviewedAt     DateTime?
+  retryCount     Int            @default(0)
+  error          String?        @db.Text
+  createdAt      DateTime       @default(now())
+
+  article Article @relation(fields: [articleId], references: [id])
+  blog    Blog    @relation(fields: [blogId], references: [id])
+}
