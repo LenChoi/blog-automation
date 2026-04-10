@@ -69,31 +69,42 @@ export async function runPipelineForBlog(blogId: number): Promise<{
     length,
   });
 
-  // 5. Retouch (2nd pass) with retry
+  // 5. Retouch (2nd pass) with retry — 3회 시도 후 가장 좋은 결과 채택
   console.log(`[Pipeline] Draft generated: ${draft.title} (${draft.content.length} chars)`);
-  let retouched = "";
-  let validationResult;
+
+  interface Candidate { retouched: string; validation: Awaited<ReturnType<typeof validateContent>>; score: number; }
+  const candidates: Candidate[] = [];
 
   for (let attempt = 0; attempt <= MAX_RETOUCH_RETRIES; attempt++) {
-    retouched = await retouchContent({
-      draft: attempt === 0 ? draft.content : retouched,
+    const retouchedContent = await retouchContent({
+      draft: attempt === 0 ? draft.content : candidates[candidates.length - 1].retouched,
       blogType: blog.type as "seo" | "review",
       persona: blog.persona,
       keyword: selectedKeyword.keyword,
     });
-    console.log(`[Pipeline] Retouch #${attempt}: ${retouched.length} chars, first 200: ${retouched.slice(0, 200)}`);
+    console.log(`[Pipeline] Retouch #${attempt}: ${retouchedContent.length} chars, first 200: ${retouchedContent.slice(0, 200)}`);
 
     // 6. Validate (3rd pass)
-    validationResult = await validateContent(retouched, selectedKeyword.keyword);
-    console.log(`[Pipeline] Validation #${attempt}:`, JSON.stringify(validationResult));
-    if (validationResult.pass) break;
+    const validation = await validateContent(retouchedContent, selectedKeyword.keyword);
+    console.log(`[Pipeline] Validation #${attempt}:`, JSON.stringify(validation));
 
-    if (attempt === MAX_RETOUCH_RETRIES) {
-      return { success: false, error: `Validation failed after ${MAX_RETOUCH_RETRIES + 1} attempts. aiScore: ${validationResult.aiScore}, lengthOk: ${validationResult.lengthOk}, densityOk: ${validationResult.densityOk}, density: ${validationResult.density.toFixed(2)}%, bannedPhrases: [${validationResult.bannedPhrases.join(", ")}]` };
-    }
+    // 종합 점수: aiScore 낮을수록 좋고, 금지어/길이/밀도 통과 시 보너스
+    const score = (100 - validation.aiScore)
+      + (validation.lengthOk ? 20 : 0)
+      + (validation.densityOk ? 20 : 0)
+      + (validation.bannedPhrases.length === 0 ? 20 : 0);
+
+    candidates.push({ retouched: retouchedContent, validation, score });
+
+    if (validation.pass) break; // 완벽히 통과하면 즉시 사용
   }
 
-  if (!validationResult) return { success: false, error: "Validation not completed" };
+  // 가장 높은 점수의 후보 선택
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+  const retouched = best.retouched;
+  const validationResult = best.validation;
+  console.log(`[Pipeline] Best candidate: score=${best.score}, aiScore=${validationResult.aiScore}, pass=${validationResult.pass}`);
 
   // 7. Generate images via Gemini (context-aware, SEO-friendly filenames)
   const images = await generateImagesForArticle(retouched, selectedKeyword.keyword);
