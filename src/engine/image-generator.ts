@@ -20,63 +20,65 @@ const s3Client = new S3Client({
   forcePathStyle: true,
 });
 
-function extractContextAroundMarker(content: string, marker: string, position: "top" | "mid" | "bottom"): string {
-  const lines = content.split("\n").filter((l) => l.trim().length > 0);
-  const markerIndex = lines.findIndex((l) => l.trim() === marker);
+/** 이미지 마커가 속한 소제목 + 본문 내용을 추출 */
+function extractSectionContext(content: string, marker: string): { heading: string; body: string } {
+  const lines = content.split("\n");
+  const markerLineIdx = lines.findIndex((l) => l.trim() === marker);
 
-  if (markerIndex !== -1) {
-    // Marker found — grab surrounding lines
-    const start = Math.max(0, markerIndex - 3);
-    const end = Math.min(lines.length, markerIndex + 4);
-    return lines
-      .slice(start, end)
-      .filter((l) => !l.includes("[IMAGE_"))
-      .join(" ")
-      .replace(/[#*>\[\]]/g, "")
-      .trim();
+  // 마커가 속한 섹션의 소제목(##) 찾기 — 마커 위쪽으로 올라가면서 ## 찾기
+  let heading = "";
+  let sectionStart = 0;
+  if (markerLineIdx !== -1) {
+    for (let i = markerLineIdx - 1; i >= 0; i--) {
+      const trimmed = lines[i].trim();
+      if (trimmed.startsWith("## ")) {
+        heading = trimmed.replace(/^##\s+/, "").replace(/[#*>\[\]]/g, "").trim();
+        sectionStart = i + 1;
+        break;
+      }
+    }
   }
 
-  // Marker not found — fallback: extract from position in text
-  const textLines = lines.filter((l) => !l.startsWith("#") && !l.includes("[IMAGE_"));
-  const total = textLines.length;
-  if (total === 0) return "";
-
-  let start: number, end: number;
-  if (position === "top") {
-    start = 0;
-    end = Math.min(5, total);
-  } else if (position === "mid") {
-    start = Math.floor(total * 0.4);
-    end = Math.min(start + 5, total);
-  } else {
-    start = Math.max(0, total - 5);
-    end = total;
+  // 소제목부터 마커까지의 본문 추출
+  const bodyLines: string[] = [];
+  const endIdx = markerLineIdx !== -1 ? markerLineIdx : lines.length;
+  for (let i = sectionStart; i < endIdx; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed || trimmed.startsWith("[IMAGE_") || trimmed === "---") continue;
+    bodyLines.push(trimmed.replace(/[#*>\[\]]/g, "").trim());
   }
 
-  return textLines
-    .slice(start, end)
-    .join(" ")
-    .replace(/[#*>\[\]]/g, "")
-    .trim();
+  // fallback — 소제목 못 찾으면 마커 주변 5줄
+  if (!heading && markerLineIdx !== -1) {
+    const start = Math.max(0, markerLineIdx - 5);
+    const end = Math.min(lines.length, markerLineIdx);
+    for (let i = start; i < end; i++) {
+      const t = lines[i].trim();
+      if (t && !t.startsWith("[IMAGE_")) bodyLines.push(t.replace(/[#*>\[\]]/g, ""));
+    }
+  }
+
+  return {
+    heading: heading || "꽃과 식물",
+    body: bodyLines.slice(0, 5).join(" ").slice(0, 300),
+  };
 }
 
-function buildImagePrompt(context: string, position: "top" | "mid" | "bottom"): string {
-  const positionGuide = {
-    top: "블로그 글 도입부에 어울리는 따뜻한 분위기의",
-    mid: "본문 핵심 내용을 보완하는",
-    bottom: "글 마무리에 어울리는 감성적인",
-  };
+function buildImagePrompt(heading: string, body: string): string {
+  return `네이버 블로그에 사용할 사진을 생성해주세요.
 
-  return `${positionGuide[position]} 꽃 관련 블로그 사진을 생성해주세요.
+이 사진은 아래 소주제에 대한 블로그 글에 삽입될 이미지입니다.
 
-문맥: ${context}
+소주제: ${heading}
+내용 요약: ${body}
 
 조건:
+- 소주제 및 내용과 직접적으로 관련 있는 이미지를 생성하세요
 - 실제 사진처럼 자연스러운 스타일 (일러스트나 만화 X)
-- 밝고 깨끗한 톤
-- 한국 블로그에 어울리는 감성
-- 텍스트나 워터마크 없음
-- 가로형 구도`;
+- 밝고 깨끗한 톤, 한국 블로그에 어울리는 감성
+- 텍스트, 워터마크, 글자 없음
+- 가로형 구도 (16:9 비율)
+- 꽃, 화환, 식물 등 관련 소재를 실제 상황에 맞게 촬영한 듯한 느낌`;
 }
 
 async function generateSingleImage(prompt: string): Promise<Buffer | null> {
@@ -155,19 +157,21 @@ async function uploadToR2(
 }
 
 export async function generateImagesForArticle(content: string, keyword: string = ""): Promise<string[]> {
-  const markers = ["[IMAGE_TOP]", "[IMAGE_MID]", "[IMAGE_BOTTOM]"] as const;
-  const positions = ["top", "mid", "bottom"] as const;
+  // IMAGE_TOP은 사용하지 않음 — 소제목 마지막에만 이미지 배치
+  const markers = ["[IMAGE_MID]", "[IMAGE_BOTTOM]"] as const;
+  const positions = ["mid", "bottom"] as const;
   const imageUrls: string[] = [];
 
   for (let i = 0; i < markers.length; i++) {
-    const context = extractContextAroundMarker(content, markers[i], positions[i]);
-    if (!context) {
+    const { heading, body } = extractSectionContext(content, markers[i]);
+    if (!heading && !body) {
       console.warn(`[ImageGen] No context found for ${markers[i]}`);
       imageUrls.push("");
       continue;
     }
+    console.log(`[ImageGen] ${markers[i]} → 소주제: "${heading}", 내용: "${body.slice(0, 80)}..."`);
 
-    const prompt = buildImagePrompt(context, positions[i]);
+    const prompt = buildImagePrompt(heading, body);
 
     try {
       const imageBuffer = await generateSingleImage(prompt);

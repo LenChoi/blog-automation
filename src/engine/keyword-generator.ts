@@ -58,7 +58,8 @@ export async function generateKeywords(blogId: number): Promise<GeneratedKeyword
     .replace("{used_keywords}", usedList.length > 0 ? usedList.join("\n") : "(없음)")
     .replace("{priority_category}", priorityCategory);
 
-  const responseText = await callGemini(prompt);
+  const rawResponse = await callGemini(prompt, 8192);
+  const responseText = rawResponse.replace(/```json\s*/g, "").replace(/```/g, "");
 
   // Extract JSON array from response
   const jsonMatch = responseText.match(/\[[\s\S]*\]/);

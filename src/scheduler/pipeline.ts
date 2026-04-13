@@ -1,17 +1,19 @@
 import { prisma } from "../db.js";
 import { ensureKeywordsAvailable } from "../engine/keyword-generator.js";
 import { generateDraft } from "../engine/content-generator.js";
-import { retouchContent } from "../engine/retoucher.js";
 import { validateContent } from "../engine/validator.js";
 import { toEditorScript, toHtml } from "../engine/formatter.js";
 import { generateImagesForArticle } from "../engine/image-generator.js";
 import { shouldIncludeLink } from "../engine/link-decider.js";
 import { mapToCategory } from "../engine/category-mapper.js";
 import { publishToNaver, confirmPublishNaver } from "../publisher/naver.js";
+import { publishToNaverPlaywright, confirmPublishNaverPlaywright } from "../publisher/naver-playwright.js";
 import { publishToTistory, confirmPublishTistory } from "../publisher/tistory.js";
 import { reviewScreenshot } from "../publisher/reviewer.js";
 
-const MAX_RETOUCH_RETRIES = 2;
+type PublishEngine = "openclaw" | "playwright";
+const PUBLISH_ENGINE: PublishEngine = (process.env.PUBLISH_ENGINE as PublishEngine) || "playwright";
+
 const MAX_REVIEW_RETRIES = 2;
 
 export async function runPipelineForBlog(blogId: number): Promise<{
@@ -59,7 +61,7 @@ export async function runPipelineForBlog(blogId: number): Promise<{
   );
 
   // 4. Generate draft (1st pass)
-  const length = 1500 + Math.floor(Math.random() * 1000); // 1500~2500
+  const length = 2500 + Math.floor(Math.random() * 500); // 2500~3000
   const draft = await generateDraft({
     keyword: selectedKeyword.keyword,
     blogType: blog.type as "seo" | "review",
@@ -70,42 +72,14 @@ export async function runPipelineForBlog(blogId: number): Promise<{
     length,
   });
 
-  // 5. Retouch (2nd pass) with retry — 3회 시도 후 가장 좋은 결과 채택
+  // 5. 리터치 없이 초안을 바로 사용 (프롬프트에 모든 요구사항 통합)
   console.log(`[Pipeline] Draft generated: ${draft.title} (${draft.content.length} chars)`);
 
-  interface Candidate { retouched: string; validation: Awaited<ReturnType<typeof validateContent>>; score: number; }
-  const candidates: Candidate[] = [];
+  const retouched = draft.content;
 
-  for (let attempt = 0; attempt <= MAX_RETOUCH_RETRIES; attempt++) {
-    const retouchedContent = await retouchContent({
-      draft: attempt === 0 ? draft.content : candidates[candidates.length - 1].retouched,
-      blogType: blog.type as "seo" | "review",
-      persona: blog.persona,
-      keyword: selectedKeyword.keyword,
-    });
-    console.log(`[Pipeline] Retouch #${attempt}: ${retouchedContent.length} chars, first 200: ${retouchedContent.slice(0, 200)}`);
-
-    // 6. Validate (3rd pass)
-    const validation = await validateContent(retouchedContent, selectedKeyword.keyword);
-    console.log(`[Pipeline] Validation #${attempt}:`, JSON.stringify(validation));
-
-    // 종합 점수: aiScore 낮을수록 좋고, 금지어/길이/밀도 통과 시 보너스
-    const score = (100 - validation.aiScore)
-      + (validation.lengthOk ? 20 : 0)
-      + (validation.densityOk ? 20 : 0)
-      + (validation.bannedPhrases.length === 0 ? 20 : 0);
-
-    candidates.push({ retouched: retouchedContent, validation, score });
-
-    if (validation.pass) break; // 완벽히 통과하면 즉시 사용
-  }
-
-  // 가장 높은 점수의 후보 선택
-  candidates.sort((a, b) => b.score - a.score);
-  const best = candidates[0];
-  const retouched = best.retouched;
-  const validationResult = best.validation;
-  console.log(`[Pipeline] Best candidate: score=${best.score}, aiScore=${validationResult.aiScore}, pass=${validationResult.pass}`);
+  // 6. Validate
+  const validationResult = await validateContent(retouched, selectedKeyword.keyword);
+  console.log(`[Pipeline] Validation:`, JSON.stringify(validationResult));
 
   // 7. Generate images via Gemini (context-aware, SEO-friendly filenames)
   const images = await generateImagesForArticle(retouched, selectedKeyword.keyword);
@@ -123,9 +97,16 @@ export async function runPipelineForBlog(blogId: number): Promise<{
     htmlContent = toHtml(retouched, images, hashtags);
   }
 
-  // Extract title from retouched content
+  // Extract title from retouched content — 페르소나 표현 자동 제거
   const titleMatch = retouched.match(/^#\s+(.+)$/m);
-  const title = titleMatch ? titleMatch[1].trim().slice(0, 25) : draft.title.slice(0, 25);
+  let title = titleMatch ? titleMatch[1].trim() : draft.title;
+  // 페르소나 표현 제거: "~년차 꽃집 언니의", "플로라의" 등
+  title = title
+    .replace(/,?\s*\d+년차?\s*[가-힣]+\s*(언니|사장|사장님)?의?/g, "")
+    .replace(/,?\s*플로라[가-힣]*/g, "")
+    .replace(/,?\s*꽃친[가-힣]*/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 
   // 10. Map to blog category
   const blogCategory = mapToCategory(
@@ -205,16 +186,23 @@ export async function publishArticle(articleId: number): Promise<{
     data: { status: "writing" },
   });
 
-  // Publish via OpenClaw
+  // Publish
   let publishResult;
   const hashtags = JSON.parse(article.hashtags);
   if (article.blog.platform === "naver") {
-    publishResult = await publishToNaver({
+    const naverInput = {
       commands: article.editorScript as any[],
       title: article.title,
       blogCategory: article.blogCategory,
       hashtags,
-    });
+    };
+    if (PUBLISH_ENGINE === "playwright") {
+      console.log("[Pipeline] Publishing via Playwright...");
+      publishResult = await publishToNaverPlaywright(naverInput, article.retouched);
+    } else {
+      console.log("[Pipeline] Publishing via OpenClaw...");
+      publishResult = await publishToNaver(naverInput, article.retouched);
+    }
   } else {
     publishResult = await publishToTistory({
       htmlContent: article.htmlContent || "",
@@ -279,9 +267,14 @@ export async function publishArticle(articleId: number): Promise<{
   }
 
   // Auto mode: confirm publish
-  const confirmResult = article.blog.platform === "naver"
-    ? await confirmPublishNaver()
-    : await confirmPublishTistory();
+  let confirmResult;
+  if (article.blog.platform === "naver") {
+    confirmResult = PUBLISH_ENGINE === "playwright"
+      ? await confirmPublishNaverPlaywright()
+      : await confirmPublishNaver();
+  } else {
+    confirmResult = await confirmPublishTistory();
+  }
 
   if (confirmResult.success) {
     await prisma.article.update({

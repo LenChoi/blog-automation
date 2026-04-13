@@ -33,6 +33,24 @@ export function toEditorScript(
       continue;
     }
 
+    if (trimmed === "---") {
+      commands.push({ type: "separator" });
+      commands.push({ type: "newline", count: 2 });
+      continue;
+    }
+
+    if (trimmed.startsWith("### ")) {
+      commands.push({ type: "newline" });
+      commands.push({
+        type: "highlight",
+        text: trimmed.replace(/^###\s+/, ""),
+        color: "#2DB400",
+        bold: true,
+      });
+      commands.push({ type: "newline" });
+      continue;
+    }
+
     if (trimmed.startsWith("## ")) {
       commands.push({ type: "newline", count: 2 });
       commands.push({

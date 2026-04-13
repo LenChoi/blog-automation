@@ -36,7 +36,7 @@ export function checkBannedPhrases(text: string): string[] {
   return found;
 }
 
-export function checkLength(text: string, min = 1200, max = 4000): boolean {
+export function checkLength(text: string, min = 2000, max = 5000): boolean {
   const stripped = text
     .replace(/\[IMAGE_(TOP|MID|BOTTOM)\]/g, "")
     .replace(/^#+\s+.+$/gm, "")

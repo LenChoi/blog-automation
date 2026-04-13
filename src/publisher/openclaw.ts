@@ -1,88 +1,100 @@
-import fs from "fs";
-import path from "path";
+import { execFile } from "child_process";
+import { writeFileSync, unlinkSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 
-const OPENCLAW_URL = "http://127.0.0.1:18789";
-const SESSION_KEY = "blog-automation";
-const MAX_RETRIES = 10;
+const MAX_RETRIES = 2;
 
-function getToken(): string {
-  const configPath = path.join(process.env.HOME || "", ".openclaw", "openclaw.json");
-  const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-  return config.gateway?.auth?.token || "";
+/** 발행 단위의 세션 키 생성 — 발행 시작 시 한 번만 호출 */
+export function createSessionKey(): string {
+  return `blog-${Date.now()}`;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForGateway(maxWaitMs = 30000): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < maxWaitMs) {
-    try {
-      const res = await fetch(`${OPENCLAW_URL}/health`);
-      const data = await res.json();
-      if (data?.ok) return true;
-    } catch {}
-    await sleep(2000);
-  }
-  return false;
-}
-
-export async function openclawChat(prompt: string, timeoutMs = 3600000): Promise<string> {
-  const token = getToken();
-
+export async function openclawChat(prompt: string, sessionKey: string, timeoutMs = 300000): Promise<string> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
     try {
-      const response = await fetch(`${OPENCLAW_URL}/v1/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-          "x-openclaw-session-key": SESSION_KEY,
-        },
-        body: JSON.stringify({
-          model: "openclaw/default",
-          stream: false,
-          user: SESSION_KEY,
-          messages: [{ role: "user", content: prompt }],
-        }),
-        signal: controller.signal,
-      });
+      const result = await runOpenclawAgent(prompt, timeoutMs, sessionKey);
 
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`OpenClaw API error ${response.status}: ${error}`);
-      }
-
-      const data = await response.json();
-      const content = data?.choices?.[0]?.message?.content || "";
-
-      if (content) return content;
-      throw new Error("Empty response from OpenClaw");
-
-    } catch (error) {
-      clearTimeout(timeout);
-      const msg = error instanceof Error ? error.message : String(error);
-      console.warn(`[OpenClaw] 시도 ${attempt + 1}/${MAX_RETRIES} 실패: ${msg}`);
-
-      if (attempt < MAX_RETRIES - 1) {
-        console.log(`[OpenClaw] 게이트웨이 재연결 대기 중...`);
-        const alive = await waitForGateway();
-        if (!alive) {
-          console.error(`[OpenClaw] 게이트웨이 응답 없음. 재시도 중단.`);
-          throw new Error(`OpenClaw gateway not responding after retry`);
+      if (result.errors.length > 0) {
+        console.warn(`[OpenClaw] 브라우저 에러 ${result.errors.length}건:`);
+        for (const err of result.errors.slice(0, 5)) {
+          console.warn(`  - ${err}`);
         }
-        console.log(`[OpenClaw] 게이트웨이 복구 확인. 재시도...`);
-      } else {
-        throw new Error(`OpenClaw failed after ${MAX_RETRIES} attempts: ${msg}`);
       }
-    } finally {
-      clearTimeout(timeout);
+
+      if (result.text) return result.text;
+      throw new Error("Empty response from OpenClaw");
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn(`[OpenClaw] 시도 ${attempt + 1}/${MAX_RETRIES} 실패: ${msg.slice(0, 300)}`);
+
+      if (attempt >= MAX_RETRIES - 1) {
+        throw new Error(`OpenClaw failed after ${MAX_RETRIES} attempts: ${msg.slice(0, 300)}`);
+      }
     }
   }
 
   throw new Error("OpenClaw: unreachable");
+}
+
+interface OpenClawResult {
+  text: string;
+  errors: string[];
+}
+
+function runOpenclawAgent(prompt: string, timeoutMs: number, sessionKey: string): Promise<OpenClawResult> {
+  const tmpFile = join(tmpdir(), `openclaw-prompt-${Date.now()}.txt`);
+  writeFileSync(tmpFile, prompt, "utf-8");
+
+  return new Promise((resolve, reject) => {
+    const timeoutSec = Math.ceil(timeoutMs / 1000);
+
+    const child = execFile(
+      "/bin/sh",
+      [
+        "-c",
+        `openclaw agent --session-id "${sessionKey}" --message "$(cat "${tmpFile}")" --json --timeout ${timeoutSec}`,
+      ],
+      { timeout: timeoutMs + 10000, maxBuffer: 10 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        try { unlinkSync(tmpFile); } catch {}
+
+        const errors: string[] = [];
+        if (stderr) {
+          for (const line of stderr.split("\n")) {
+            if (line.includes("browser failed") || line.includes("Error:")) {
+              errors.push(line.trim());
+            }
+          }
+        }
+
+        if (error) {
+          return reject(new Error(`OpenClaw CLI error: ${error.message}\nstderr: ${stderr?.slice(0, 500)}`));
+        }
+
+        let text = "";
+        try {
+          const data = JSON.parse(stdout);
+          text =
+            data?.result?.payloads?.[0]?.text ||
+            data?.payloads?.[0]?.text ||
+            "";
+        } catch {
+          const jsonMatch = stdout.match(/\{[\s\S]*"payloads"[\s\S]*\}/);
+          if (jsonMatch) {
+            try {
+              const data = JSON.parse(jsonMatch[0]);
+              text =
+                data?.result?.payloads?.[0]?.text ||
+                data?.payloads?.[0]?.text ||
+                "";
+            } catch {}
+          }
+          if (!text) text = stdout.trim();
+        }
+
+        resolve({ text, errors });
+      },
+    );
+  });
 }
